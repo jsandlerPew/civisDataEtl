@@ -12,7 +12,6 @@ lapply(X = pack, library, character.only = TRUE)
 # Youtube channel id
 channel_id <- 'UCGERnPMUkIrDlNf7XMmk8Vg'
 
-file.remove('.httr-oauth') #remove current token
 
 
 # Generate an OAuth2.0 token
