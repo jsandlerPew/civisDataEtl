@@ -12,6 +12,9 @@ lapply(X = pack, library, character.only = TRUE)
 # Youtube channel id
 channel_id <- 'UCGERnPMUkIrDlNf7XMmk8Vg'
 
+file.remove('.httr-oauth') #remove current token
+
+
 # Generate an OAuth2.0 token
 oauth_app <- oauth_app(
   appname      = 'Pew Research',
@@ -26,8 +29,9 @@ google_token <- oauth2.0_token(
     'https://www.googleapis.com/auth/yt-analytics.readonly',
     'https://www.googleapis.com/auth/yt-analytics-monetary.readonly',
     'https://www.googleapis.com/auth/youtube',
-    'https://www.googleapis.com/auth/youtubepartner'
-  )
+    'https://www.googleapis.com/auth/youtubepartner'),
+  use_oob = TRUE,
+  cache = TRUE
 )
 
 # YOUTUBE DATA API --------------------------------------------------------
