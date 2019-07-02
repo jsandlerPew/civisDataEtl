@@ -1,19 +1,25 @@
 
-rm(list = ls())
+
 
 # SETUP -------------------------------------------------------------------
 
+# function to convert avg view duration to MMSS from S
+get_min_sec <- function(x){
+  x <- as.numeric(x)
+  min <- floor(x / 60)
+  rem <- (x / 60) - min
+  sec <- rem * 60
+  paste0(min, 'M', sec, 'S')
+} 
+
 # Handle packages
-pack <- c('shiny', 'shinydashboard', 'tidyverse', 'plotly', 'httr', 'DT')
+pack <- c('tidyverse', 'httr', 'civis')
 pack_new <- pack[!pack %in% installed.packages()[,'Package']]
 if (length(pack_new)) install.packages(pack_new, dependencies = TRUE)
 lapply(X = pack, library, character.only = TRUE)
 
 # Youtube channel id
 channel_id <- 'UCGERnPMUkIrDlNf7XMmk8Vg'
-
-file.remove('.httr-oauth') #remove current token
-
 
 # Generate an OAuth2.0 token
 oauth_app <- oauth_app(
@@ -29,9 +35,8 @@ google_token <- oauth2.0_token(
     'https://www.googleapis.com/auth/yt-analytics.readonly',
     'https://www.googleapis.com/auth/yt-analytics-monetary.readonly',
     'https://www.googleapis.com/auth/youtube',
-    'https://www.googleapis.com/auth/youtubepartner'),
-  use_oob = TRUE,
-  cache = TRUE
+    'https://www.googleapis.com/auth/youtubepartner'
+  )
 )
 
 # YOUTUBE DATA API --------------------------------------------------------
@@ -91,7 +96,7 @@ video_info <- lapply(X = seq_len(length(response$items)), FUN = function(i) {
 
 # Repeat for each page
 while (!is.null(response$nextPageToken)) {
-
+  
   # Generate a new http query using next page token
   url <- base_url
   url$query <- list(
@@ -103,7 +108,7 @@ while (!is.null(response$nextPageToken)) {
   url <- build_url(url)
   req <- GET(url, config = httr::config(token = google_token))
   response <- content(req)
-
+  
   # Extract video info from response
   video_info <- lapply(X = seq_len(length(response$items)), FUN = function(i) {
     list(
@@ -114,9 +119,9 @@ while (!is.null(response$nextPageToken)) {
   }) %>%
     # Bind to full data
     bind_rows(video_info, .)
-
+  
   writeLines(paste('Successfully scraped', length(response$items), 'videos.'))
-
+  
 }
 
 # Clean video info
@@ -136,7 +141,7 @@ write.csv(x = video_info, file = 'video_info.csv', row.names = FALSE)
 # YOUTUBE ANALYTICS API ---------------------------------------------------
 
 # Initialize object to store all data
-stats_all <- data.frame()
+stats_main <- data.frame()
 
 # Create group factor to split data into groups of 200
 groups <- ceiling(1:nrow(video_info) / 200)
@@ -144,12 +149,12 @@ groups <- ceiling(1:nrow(video_info) / 200)
 # groups <- ceiling(1:length(video_info$id) / 200)
 
 for (group in unique(groups)) {
-
-   # Get the video IDs for group
+  
+  # Get the video IDs for group
   video_ids <- as.character(video_info$id[which(groups == group)])
-
+  
   filters <- paste0('video==', paste(video_ids, collapse = ','))
-
+  
   url <- parse_url('https://youtubeanalytics.googleapis.com/v2/reports')
   url$query <- list(
     ids        = paste0('channel==', channel_id),
@@ -157,27 +162,89 @@ for (group in unique(groups)) {
     metrics    = 'views,averageViewDuration,averageViewPercentage',
     filters    = filters,
     sort       = 'views',
-    startDate  = '2000-01-01',
-    endDate    = Sys.Date()
+    startDate  = '2019-01-01',
+    endDate    = '2019-03-31'
   )
   url <- build_url(url)
   req <- GET(url, config = httr::config(token = google_token))
   response <- content(req)
-
-  stats2 <- data.frame(
+  
+  # Clean
+  stats_this <- data.frame(
     matrix(unlist(response$rows), ncol = 4, byrow = TRUE)
   ) %>%
-    set_names(c('id', 'views', 'averageViewDuration', 'averageViewPercentage'))
-  stats_all <- bind_rows(stats_all, stats2)
-    writeLines(paste('Successfully scraped', length(response$rows), 'videos.'))
+    set_names(c('id', 'views', 'averageViewDuration', 'averageViewPercentage')) %>%
+    mutate(averageViewDuration = get_min_sec(averageViewDuration))
+  stats_main <- bind_rows(stats_main, stats_this)
+  writeLines(paste('Successfully scraped', length(response$rows), 'videos.'))
+  Sys.sleep(2)
+}
+
+# VIDEO DURATION ----------------------------------------------------------
+
+# Initialize object to store all data
+stats_duration <- data.frame()
+
+# Create group factor to split data into groups of 50
+groups <- ceiling(1:nrow(video_info) / 50)
+# EQUIVALENT TO:
+# groups <- ceiling(1:length(video_info$id) / 50)
+
+for (group in unique(groups)) {
+  
+  # Get the video IDs for group
+  video_ids <- as.character(video_info$id[which(groups == group)])
+  video_ids <- paste(video_ids, collapse = ',')
+  
+  url <- parse_url('https://www.googleapis.com/youtube/v3/videos')
+  url$query <- list(
+    part       = "contentDetails",
+    id         = video_ids,
+    startDate  = '2019-01-01',
+    endDate    = '2019-03-31'
+  )
+  url <- build_url(url)
+  req <- GET(url, config = httr::config(token = google_token))
+  response <- content(req)
+  
+  # Clean
+  stats_this <- data.frame(
+    matrix(unlist(response$items), ncol = 10, byrow = TRUE)
+  ) %>%
+    select(3:4) %>%
+    set_names(c('id', 'videoDuration')) %>%
+    mutate(videoDuration = gsub(x           = videoDuration,
+                                pattern     = "^PT",
+                                replacement = ""))
+  
+  stats_duration <- bind_rows(stats_duration, stats_this)
+  writeLines(paste('Successfully scraped', length(response$items), 'videos.'))
   Sys.sleep(2)
 }
 
 # MERGE -------------------------------------------------------------------
 
-data_merged <- merge(
-  x = video_info, y = stats_all,
-  by = 'id', all = TRUE
-)
+# Merge main and duration stats
+stats_all <- merge(x   = stats_main,
+                   y   = stats_duration,
+                   by  = "id",
+                   all = TRUE)
 
-write.csv(x = data_merged, file = 'data_merged.csv', row.names = FALSE)
+# Merge Data and Analytics API responses
+data_merged <- merge(x = video_info,
+                     y = stats_all,
+                     by = 'id',
+                     all = TRUE)
+
+# Save merged data
+write.csv(x = data_merged, file = 'data_merged_q1.csv', row.names = FALSE)
+
+# TODO: Figure out why this doesn't work:
+# civis::write_civis(
+#   x = data_merged,
+#   tablename,
+#   database
+# )
+
+
+
